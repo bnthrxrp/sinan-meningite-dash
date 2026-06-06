@@ -10,9 +10,10 @@
   "rows_processed": 34358,
   "columns_raw": 132,
   "columns_processed": 143,
-  "generated_at": "2026-06-05T19:30:25",
+  "generated_at": "2026-06-06T18:53:37",
   "rows_after_filter": 1749,
   "files": [
+    "base_enriquecida.parquet",
     "visao_geral.parquet",
     "evolucao_semanal.parquet",
     "tendencia_notif.parquet",

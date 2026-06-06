@@ -14,6 +14,9 @@ LOGGER = logging.getLogger(__name__)
 def salvar_tabelas(tabelas: dict[str, pd.DataFrame], metadata: dict) -> None:
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
+    if "base_enriquecida" in tabelas:
+        tabelas["base_enriquecida"].to_parquet(PROCESSED_DIR / "base_enriquecida.parquet", index=False)
+
     tabelas["visao_geral"].to_parquet(PROCESSED_DIR / "visao_geral.parquet", index=False)
     tabelas["evolucao_semanal"].to_parquet(PROCESSED_DIR / "evolucao_semanal.parquet", index=False)
     tabelas["tendencia_notif"].to_parquet(PROCESSED_DIR / "tendencia_notif.parquet", index=False)
@@ -25,6 +28,7 @@ def salvar_tabelas(tabelas: dict[str, pd.DataFrame], metadata: dict) -> None:
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "rows_after_filter": int(len(tabelas["evolucao_semanal"])),
         "files": [
+            "base_enriquecida.parquet",
             "visao_geral.parquet",
             "evolucao_semanal.parquet",
             "tendencia_notif.parquet",
@@ -39,4 +43,3 @@ def salvar_tabelas(tabelas: dict[str, pd.DataFrame], metadata: dict) -> None:
 
     METADATA_FILE.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
     LOGGER.info("Metadata salva em %s", METADATA_FILE)
-

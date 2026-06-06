@@ -31,6 +31,7 @@ def executar_etl() -> dict[str, object]:
     LOGGER.info("Base enriquecida: %s linhas | %s colunas", len(df), len(df.columns))
 
     tabelas = construir_tabelas(df)
+    tabelas["base_enriquecida"] = df
     metadata["rows_raw"] = int(len(df_raw))
     metadata["rows_processed"] = int(len(df))
     metadata["columns_raw"] = int(len(df_raw.columns))
@@ -49,4 +50,3 @@ def main() -> None:
         if isinstance(df_out, dict):
             continue
         LOGGER.info("%-20s -> %s linhas | %s colunas", nome, df_out.shape[0], df_out.shape[1])
-

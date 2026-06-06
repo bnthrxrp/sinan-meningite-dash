@@ -246,6 +246,14 @@ def carregar_dados(base_dir: str) -> dict:
 
 
 @st.cache_data
+def carregar_base_enriquecida(base_dir: str) -> pd.DataFrame:
+    p = Path(base_dir) / "data" / "processed" / "base_enriquecida.parquet"
+    if p.exists():
+        return pd.read_parquet(p)
+    return pd.DataFrame()
+
+
+@st.cache_data
 def carregar_metadata(base_dir: str) -> dict:
     p = Path(base_dir) / "data" / "processed" / "metadata.json"
     if not p.exists():
@@ -265,35 +273,225 @@ def carregar_geojson():
         return None
 
 
+def faixa_etaria(idade_anos: pd.Series) -> pd.Series:
+    bins = [0, 10, 20, 30, 40, 50, 60, 70, 80, np.inf]
+    labels = ["0-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70-79", "80+"]
+    return pd.cut(idade_anos, bins=bins, labels=labels, right=False)
+
+
+def top5_com_outros(serie_contagem: pd.Series, col_nome: str) -> pd.DataFrame:
+    serie_contagem = serie_contagem.dropna()
+    if serie_contagem.empty:
+        return pd.DataFrame(columns=[col_nome, "total"])
+
+    top5 = serie_contagem.nlargest(5).rename_axis(col_nome).reset_index(name="total")
+    resto = int(serie_contagem.drop(top5[col_nome]).sum())
+    if resto > 0:
+        if (top5[col_nome] == "Outros").any():
+            top5.loc[top5[col_nome] == "Outros", "total"] += resto
+        else:
+            top5 = pd.concat(
+                [top5, pd.DataFrame([{col_nome: "Outros", "total": resto}])],
+                ignore_index=True,
+            )
+    return top5
+
+
+def calcular_tendencia_uf(evolucao: pd.DataFrame, coluna: str = "total") -> pd.DataFrame:
+    if evolucao.empty:
+        return pd.DataFrame(columns=["uf_notificacao", "slope"])
+
+    semanas = sorted(evolucao["sem_label"].dropna().unique())
+    ultimas6 = semanas[-6:] if len(semanas) >= 6 else semanas
+    df6 = evolucao[evolucao["sem_label"].isin(ultimas6)].copy()
+    sem_idx = {s: i for i, s in enumerate(ultimas6)}
+    df6["sem_idx"] = df6["sem_label"].map(sem_idx)
+
+    resultados = []
+    for uf, grupo in df6.groupby("uf_notificacao"):
+        grupo = grupo.sort_values("sem_idx")
+        if len(grupo) >= 3:
+            x = grupo["sem_idx"].to_numpy(dtype=float)
+            y = grupo[coluna].fillna(0).to_numpy(dtype=float)
+            if np.unique(x).size >= 2:
+                slope = float(np.polyfit(x, y, 1)[0])
+            else:
+                slope = 0.0
+        else:
+            slope = 0.0
+        resultados.append({"uf_notificacao": uf, "slope": round(float(slope), 2)})
+    return pd.DataFrame(resultados)
+
+
+def contar_sintomas(df_sub: pd.DataFrame) -> pd.DataFrame:
+    mapa_sintomas = {
+        "CLI_CEFALE": "Cefaleia",
+        "CLI_FEBRE": "Febre",
+        "CLI_VOMITO": "Vomito",
+        "CLI_CONVUL": "Convulsoes",
+        "CLI_RIGIDE": "Rigidez de Nuca",
+        "CLI_KERNIG": "Kernig/Brudzinski",
+        "CLI_ABAULA": "Abaulamento de Fontanela",
+        "CLI_COMA": "Coma",
+        "CLI_PETEQU": "Petequias/Sufusoes",
+        "CLI_OUTRAS": "Outros Sintomas",
+    }
+    sint_counts = {}
+    for col, label in mapa_sintomas.items():
+        if col in df_sub.columns:
+            sint_counts[label] = int((pd.to_numeric(df_sub[col], errors="coerce") == 1).sum())
+    return top5_com_outros(pd.Series(sint_counts).sort_values(ascending=False), "sintoma")
+
+
+def gerar_tabelas_dashboard(df: pd.DataFrame) -> dict:
+    if df.empty:
+        return {
+            "visao_geral": pd.DataFrame(),
+            "evolucao_semanal": pd.DataFrame(),
+            "faixa_etaria": pd.DataFrame(),
+            "sexo": pd.DataFrame(),
+            "sintomas": pd.DataFrame(),
+            "evolucao": pd.DataFrame(),
+            "tendencia_notif": pd.DataFrame(),
+            "tendencia_conf": pd.DataFrame(),
+            "tendencia_mening": pd.DataFrame(),
+        }
+
+    visao_geral = (
+        df.groupby("uf_notificacao", dropna=False)
+        .agg(
+            total_notificacoes=("TP_NOT", "count"),
+            total_confirmados=("is_confirmado", "sum"),
+            total_meningococica=("is_meningococica", "sum"),
+            total_sorogrupo_b=("is_sorogrupo_b", "sum"),
+            total_outro_tipo=("is_outro_tipo", "sum"),
+        )
+        .reset_index()
+        .sort_values("total_notificacoes", ascending=False)
+    )
+
+    evolucao_semanal = (
+        df.groupby(["uf_notificacao", "sem_label"], dropna=False)
+        .agg(
+            total_notificacoes=("TP_NOT", "count"),
+            total_confirmados=("is_confirmado", "sum"),
+            total_meningococica=("is_meningococica", "sum"),
+            total_sorogrupo_b=("is_sorogrupo_b", "sum"),
+        )
+        .reset_index()
+        .sort_values(["uf_notificacao", "sem_label"])
+    )
+
+    df_conf = df[df["is_confirmado"] == 1]
+    faixa_df = (
+        df_conf["faixa_etaria"]
+        .value_counts()
+        .reindex(["0-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70-79", "80+"])
+        .fillna(0)
+        .astype(int)
+        .reset_index()
+        .rename(columns={"index": "faixa_etaria", "faixa_etaria": "total"})
+    )
+
+    sexo_df = (
+        df_conf["sexo_label"]
+        .value_counts()
+        .reset_index()
+        .rename(columns={"index": "sexo", "sexo_label": "total"})
+    )
+
+    sintomas_df = contar_sintomas(df_conf)
+
+    evolucao_df = (
+        df_conf["evolucao_label"]
+        .value_counts()
+        .reset_index()
+        .rename(columns={"index": "evolucao", "evolucao_label": "total"})
+    )
+
+    tend_notif = calcular_tendencia_uf(
+        evolucao_semanal[["uf_notificacao", "sem_label", "total_notificacoes"]].rename(
+            columns={"total_notificacoes": "total"}
+        ),
+        "total",
+    )
+    tend_conf = calcular_tendencia_uf(
+        evolucao_semanal[["uf_notificacao", "sem_label", "total_confirmados"]].rename(
+            columns={"total_confirmados": "total"}
+        ),
+        "total",
+    )
+    tend_mening = calcular_tendencia_uf(
+        evolucao_semanal[["uf_notificacao", "sem_label", "total_meningococica"]].rename(
+            columns={"total_meningococica": "total"}
+        ),
+        "total",
+    )
+
+    def salvar_perfis(df_sub: pd.DataFrame, sufixo: str) -> dict[str, pd.DataFrame]:
+        fe = (
+            df_sub["faixa_etaria"]
+            .value_counts()
+            .reindex(["0-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70-79", "80+"])
+            .fillna(0)
+            .astype(int)
+            .reset_index()
+            .rename(columns={"index": "faixa_etaria", "faixa_etaria": "total"})
+        )
+        sx = (
+            df_sub["sexo_label"]
+            .value_counts()
+            .reset_index()
+            .rename(columns={"index": "sexo", "sexo_label": "total"})
+        )
+        sint = contar_sintomas(df_sub)
+        evo_ = (
+            df_sub["evolucao_label"]
+            .value_counts()
+            .reset_index()
+            .rename(columns={"index": "evolucao", "evolucao_label": "total"})
+        )
+        return {
+            f"faixa_etaria_{sufixo}": fe,
+            f"sexo_{sufixo}": sx,
+            f"sintomas_{sufixo}": sint,
+            f"evolucao_{sufixo}": evo_,
+        }
+
+    dados_gerados = {
+        "visao_geral": visao_geral,
+        "evolucao_semanal": evolucao_semanal,
+        "faixa_etaria": faixa_df,
+        "sexo": sexo_df,
+        "sintomas": sintomas_df,
+        "evolucao": evolucao_df,
+        "tendencia_notif": tend_notif,
+        "tendencia_conf": tend_conf,
+        "tendencia_mening": tend_mening,
+    }
+    dados_gerados.update(salvar_perfis(df, "todos"))
+    dados_gerados.update(salvar_perfis(df_conf, "confirmados"))
+    dados_gerados.update(salvar_perfis(df[df["is_meningococica"] == True], "meningococica"))
+    dados_gerados.update(salvar_perfis(df[df["is_sorogrupo_b"] == True], "sorogrupo_b"))
+    return dados_gerados
+
+
 # ── Carrega dados ─────────────────────────────────────────────────────────────
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-dados    = carregar_dados(BASE_DIR)
-geojson  = carregar_geojson()
-metadata  = carregar_metadata(BASE_DIR)
+geojson = carregar_geojson()
+metadata = carregar_metadata(BASE_DIR)
+base = carregar_base_enriquecida(BASE_DIR)
 
-vg  = dados.get("visao_geral", pd.DataFrame())
-es  = dados.get("evolucao_semanal", pd.DataFrame())
-fe  = dados.get("faixa_etaria",  pd.DataFrame())
-sx  = dados.get("sexo",          pd.DataFrame())
-sin = dados.get("sintomas",      pd.DataFrame())
-evo = dados.get("evolucao",      pd.DataFrame())
-
-if vg.empty or es.empty:
-    st.error("Nao foi possivel localizar os dados processados. Execute o ETL antes de abrir o dashboard.")
+if base.empty:
+    st.error("Nao foi possivel localizar a base enriquecida. Execute o ETL antes de abrir o dashboard.")
     st.stop()
 
-ultima_sem = es["sem_label"].dropna().max() if not es.empty else "N/D"
-ultima_atualizacao = metadata.get("generated_at", "N/D")
-fonte_dados = metadata.get("source", "desconhecida")
+base["DT_NOTIFIC"] = pd.to_datetime(base["DT_NOTIFIC"], errors="coerce")
+anos_disponiveis = sorted(base["DT_NOTIFIC"].dt.year.dropna().astype(int).unique().tolist())
 
-total_notif    = int(vg["total_notificacoes"].sum())
-total_conf     = int(vg["total_confirmados"].sum())
-total_mening   = int(vg["total_meningococica"].sum())
-total_sorob    = int(vg["total_sorogrupo_b"].sum())
-total_outro    = int(vg["total_outro_tipo"].sum())
-pct_conf       = total_conf   / total_notif  * 100 if total_notif  else 0
-pct_mening     = total_mening / total_conf   * 100 if total_conf   else 0
-pct_outro      = total_outro  / total_conf   * 100 if total_conf   else 0
+if not anos_disponiveis:
+    st.error("A base nao possui valores validos em DT_NOTIFIC para montar o filtro de ano.")
+    st.stop()
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -341,6 +539,50 @@ st.markdown(f"""
 
 
 # ── KPIs ──────────────────────────────────────────────────────────────────────
+st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+filtro_col, _ = st.columns([1, 3])
+with filtro_col:
+    st.markdown(
+        f"<div style='font-size:0.72rem;color:{TEXTO_MUTED};text-transform:uppercase;"
+        f"letter-spacing:0.08em;margin-bottom:0.3rem'>Ano da Notificacao</div>",
+        unsafe_allow_html=True,
+    )
+    opcao_ano = st.selectbox(
+        "Ano",
+        options=["Todos"] + [str(ano) for ano in anos_disponiveis],
+        index=1 if "2026" in [str(ano) for ano in anos_disponiveis] else 0,
+        label_visibility="collapsed",
+        key="filtro_ano_notificacao",
+    )
+
+ano_selecionado = None if opcao_ano == "Todos" else int(opcao_ano)
+base_filtrada = base if ano_selecionado is None else base[base["DT_NOTIFIC"].dt.year == ano_selecionado].copy()
+
+if base_filtrada.empty:
+    st.warning("Nao ha registros para o ano selecionado.")
+    st.stop()
+
+dados = gerar_tabelas_dashboard(base_filtrada)
+vg  = dados.get("visao_geral", pd.DataFrame())
+es  = dados.get("evolucao_semanal", pd.DataFrame())
+fe  = dados.get("faixa_etaria",  pd.DataFrame())
+sx  = dados.get("sexo",          pd.DataFrame())
+sin = dados.get("sintomas",      pd.DataFrame())
+evo = dados.get("evolucao",      pd.DataFrame())
+
+ultima_sem = es["sem_label"].dropna().max() if not es.empty else "N/D"
+ultima_atualizacao = metadata.get("generated_at", "N/D")
+fonte_dados = metadata.get("source", "desconhecida")
+
+total_notif    = int(vg["total_notificacoes"].sum())
+total_conf     = int(vg["total_confirmados"].sum())
+total_mening   = int(vg["total_meningococica"].sum())
+total_sorob    = int(vg["total_sorogrupo_b"].sum())
+total_outro    = int(vg["total_outro_tipo"].sum())
+pct_conf       = total_conf   / total_notif  * 100 if total_notif  else 0
+pct_mening     = total_mening / total_conf   * 100 if total_conf   else 0
+pct_outro      = total_outro  / total_conf   * 100 if total_conf   else 0
+
 c1, c2, c3, c4 = st.columns(4)
 
 with c1:
