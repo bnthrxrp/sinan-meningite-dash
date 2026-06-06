@@ -1,0 +1,26 @@
+{
+  "source": "pysus",
+  "disease": "MENI",
+  "years": [
+    2025,
+    2026
+  ],
+  "raw_file": "data\\raw\\meningite_sinan.parquet",
+  "rows_raw": 35041,
+  "rows_processed": 34358,
+  "columns_raw": 132,
+  "columns_processed": 143,
+  "generated_at": "2026-06-05T19:30:25",
+  "rows_after_filter": 1749,
+  "files": [
+    "visao_geral.parquet",
+    "evolucao_semanal.parquet",
+    "tendencia_notif.parquet",
+    "tendencia_conf.parquet",
+    "tendencia_mening.parquet",
+    "faixa_etaria_*.parquet",
+    "sexo_*.parquet",
+    "sintomas_*.parquet",
+    "evolucao_*.parquet"
+  ]
+}

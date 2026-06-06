@@ -1,11 +1,12 @@
 import os
+import json
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 import requests
-from scipy import stats as sp_stats
 
 # ── Configuração da página ────────────────────────────────────────────────────
 st.set_page_config(
@@ -245,6 +246,17 @@ def carregar_dados(base_dir: str) -> dict:
 
 
 @st.cache_data
+def carregar_metadata(base_dir: str) -> dict:
+    p = Path(base_dir) / "data" / "processed" / "metadata.json"
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+@st.cache_data
 def carregar_geojson():
     url = "https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/brazil-states.geojson"
     try:
@@ -257,15 +269,22 @@ def carregar_geojson():
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 dados    = carregar_dados(BASE_DIR)
 geojson  = carregar_geojson()
+metadata  = carregar_metadata(BASE_DIR)
 
-vg  = dados["visao_geral"]
-es  = dados["evolucao_semanal"]
+vg  = dados.get("visao_geral", pd.DataFrame())
+es  = dados.get("evolucao_semanal", pd.DataFrame())
 fe  = dados.get("faixa_etaria",  pd.DataFrame())
 sx  = dados.get("sexo",          pd.DataFrame())
 sin = dados.get("sintomas",      pd.DataFrame())
 evo = dados.get("evolucao",      pd.DataFrame())
 
+if vg.empty or es.empty:
+    st.error("Nao foi possivel localizar os dados processados. Execute o ETL antes de abrir o dashboard.")
+    st.stop()
+
 ultima_sem = es["sem_label"].dropna().max() if not es.empty else "N/D"
+ultima_atualizacao = metadata.get("generated_at", "N/D")
+fonte_dados = metadata.get("source", "desconhecida")
 
 total_notif    = int(vg["total_notificacoes"].sum())
 total_conf     = int(vg["total_confirmados"].sum())
@@ -291,6 +310,8 @@ with st.sidebar:
     <div style='margin-top:2rem;padding-top:1rem;border-top:1px solid {CINZA_LINHA};
                 font-size:0.68rem;color:{TEXTO_MUTED};line-height:1.6'>
         Fonte: SINAN / Ministério da Saúde<br>
+        Origem da base: <b style='color:{LARANJA_CLARO}'>{fonte_dados}</b><br>
+        Atualizado em: <b style='color:{LARANJA_CLARO}'>{ultima_atualizacao}</b><br>
         Última Semana Epidemiológica disponível: <b style='color:{LARANJA_CLARO}'>{ultima_sem}</b><br>
     </div>
     <div style='margin-top:1rem;padding-top:1rem;border-top:1px solid {CINZA_LINHA};
@@ -700,6 +721,7 @@ st.markdown(f"""
 <div style="margin-top:2rem;padding-top:1rem;border-top:1px solid {CINZA_LINHA};
             text-align:center;font-size:0.7rem;color:{TEXTO_MUTED}">
     Dados: SINAN / Ministério da Saúde ·
+    Base atualizada em: <b style="color:{LARANJA_CLARO}">{ultima_atualizacao}</b> ·
     Última SE disponível: <b style="color:{LARANJA_CLARO}">{ultima_sem}</b> ·
     Dados sujeitos a revisão
 </div>

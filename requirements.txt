@@ -3,7 +3,7 @@ plotly
 pandas
 pyarrow
 numpy
-scipy
 requests
 beautifulsoup4
 openpyxl
+pysus>=2.1.0

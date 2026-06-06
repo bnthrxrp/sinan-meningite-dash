@@ -1,5 +1,6 @@
 env/
 data/raw/
+.tmp/
 __pycache__/
 *.pyc
 *.csv
