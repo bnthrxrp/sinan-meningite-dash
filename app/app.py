@@ -906,7 +906,7 @@ with col_fm_tipo:
     st.markdown(f"<div style='font-size:0.72rem;color:{TEXTO_MUTED};text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.3rem'>Tipo de Caso</div>", unsafe_allow_html=True)
     tipo_mapa = st.selectbox(
         "Tipo Mapa",
-        options=["Total de Casos Notificados", "Casos Confirmados de Meningite Meningocócica", "Casos Confirmados de Meningite Sorogrupo B"],
+        options=["Total de Casos Notificados", "Total de Casos Confirmados", "Casos Confirmados de Meningite Meningocócica", "Casos Confirmados de Meningite Sorogrupo B"],
         index=0,
         label_visibility="collapsed",
         key="tipo_mapa",
@@ -923,6 +923,7 @@ with col_fm_criterio:
 
 col_mapa_map = {
     "Total de Casos Notificados":                       "total_notificacoes",
+    "Total de Casos Confirmados":                       "total_confirmados",
     "Casos Confirmados de Meningite Meningocócica":     "total_meningococica",
     "Casos Confirmados de Meningite Sorogrupo B":       "total_sorogrupo_b",
 }
